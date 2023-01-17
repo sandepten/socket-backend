@@ -1,46 +1,51 @@
 const express = require("express");
-const app = express();
-const PORT = 4000;
-const http = require("http").Server(app);
 const cors = require("cors");
+const mongoose = require("mongoose");
+const authRoutes = require("./routes/auth");
+const messageRoutes = require("./routes/messages");
+const app = express();
+const socket = require("socket.io");
+require("dotenv").config();
 
 app.use(cors());
+app.use(express.json());
 
-const io = require("socket.io")(http, {
+mongoose
+  .connect(process.env.MONGO_URL, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => {
+    console.log("DB Connetion Successfull");
+  })
+  .catch((err) => {
+    console.log(err.message);
+  });
+
+app.use("/api/auth", authRoutes);
+app.use("/api/messages", messageRoutes);
+
+const server = app.listen(process.env.PORT, () =>
+  console.log(`Server started on ${process.env.PORT}`)
+);
+const io = socket(server, {
   cors: {
     origin: "http://localhost:3000",
+    credentials: true,
   },
 });
-let users = [];
+
+global.onlineUsers = new Map();
 io.on("connection", (socket) => {
-  console.log(`${socket.id} user just connected!`);
-  socket.on("message", (data) => {
-    io.emit("messageResponse", data);
+  global.chatSocket = socket;
+  socket.on("add-user", (userId) => {
+    onlineUsers.set(userId, socket.id);
   });
-  socket.on("typing", (data) => socket.broadcast.emit("typingResponse", data));
-  socket.on("newUser", (data) => {
-    //Adds the new user to the list of users
-    users.push(data);
-    //Sends the list of users to the client
-    io.emit("newUserResponse", users);
-  });
-  socket.on("disconnect", () => {
-    console.log("A user disconnected");
-    //Updates the list of users when a user disconnects from the server
-    users = users.filter((user) => user.socketID !== socket.id);
-    // console.log(users);
-    //Sends the list of users to the client
-    io.emit("newUserResponse", users);
-    socket.disconnect();
-  });
-});
 
-app.get("/", (req, res) => {
-  res.json({
-    message: "Hello world",
+  socket.on("send-msg", (data) => {
+    const sendUserSocket = onlineUsers.get(data.to);
+    if (sendUserSocket) {
+      socket.to(sendUserSocket).emit("msg-recieve", data.msg);
+    }
   });
-});
-
-http.listen(PORT, () => {
-  console.log(`Server listening on ${PORT}`);
 });
